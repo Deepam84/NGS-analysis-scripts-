@@ -1,0 +1,2234 @@
+---
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+Here are the scripts for my research project for the module RBIF120 
+
+Differential Expression analysis with DESeq2
+
+1.Load the required packages and dependancies for differential analysis of 
+alternatively spliced transcripts
+
+```r
+
+install.packages("dplyr")
+library("dplyr")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.10")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install(c("Biobase", "DESeq2",
+                       "org.Hs.eg.db","AnnotationDbi","tximport",
+                       "bioDist","ggbio",
+                       "GenomicAlignments",
+                       "DESeq","tximportData","tximport",
+                       "tximeta","GenomicFeatures","ggplot"))
+                       
+install.packages("readr")
+install.packages("rmarkdown")
+install.packages("rprojroot")
+install.packages("rlang")
+
+library("DESeq")                       
+library("DESeq2")
+library("DEXSeq")
+library("org.Hs.eg.db")
+library("AnnotationDbi")
+library("tximport")
+library("bioDist")
+library("ggbio")
+library("GenomicFeatures")
+library("GenomicAlignments")
+library("tximportData")
+library("tximport")
+library("tximeta")
+library("readr")
+library("ggplot")
+library("rmarkdown")
+
+```
+
+2.Import of the metadata for this project from the SRA
+
+```r
+
+
+dir1 <- system.file("extdata", package = "tximportData")
+list.files(dir1)
+
+samples <- read.csv(file.path("D:","Users","deepa","Downloads", 
+"SraRunTable.txt"), header = TRUE)
+#samples
+
+```
+
+3.Set the location of the Salmon files in WSL
+
+```r
+
+dir2 <- "D:/Users/deepa/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc/LocalState/rootfs/home/deepam84/Bioinformatics/RBIF120/salmon_analysis"
+
+files <- file.path(dir2, "quants", paste(samples$Run, "_quant",sep=""),"quant.sf")
+                    
+files
+names(files) <- paste0("sample", 1:85)
+all(file.exists(files))
+
+#[1] TRUE
+
+#names(files)
+
+```
+4.Download the gff files for gencode release 33 as a gff zipped file import into R
+
+```r
+
+gencode_file <- file.path(dir2, "gencode.v33.annotation.gff3.gz")
+
+txdb <- makeTxDbFromGFF(gencode_file)
+
+txdb
+
+#TxDb object:
+# Db type: TxDb
+# Supporting package: GenomicFeatures
+# Data source: D:/Users/deepa/AppData/Local/Packages/CanonicalGroupLimited.UbuntuonWindows_79rhkp1fndgsc/LocalState/rootfs/home/deepam84/Bioinformatics/RBIF120/salmon_analysis/gencode.v33.annotation.gff3.gz
+# Organism: NA
+# Taxonomy ID: NA
+# miRBase build ID: NA
+# Genome: NA
+# transcript_nrow: 227912
+# exon_nrow: 1377112
+# cds_nrow: 764599
+# Db created by: GenomicFeatures package from Bioconductor
+# Creation time: 2020-03-18 20:38:23 -0400 (Wed, 18 Mar 2020)
+# GenomicFeatures version at creation time: 1.38.2
+# RSQLite version at creation time: 2.2.0
+# DBSCHEMAVERSION: 1.2
+
+saveDb(x=txdb, file = "gencode.v33.annotation.TxDb")
+
+```
+5.Create a tx2gene object; a tibble consisting of two files
+
+```r
+
+k <- keys(txdb, keytype = "TXNAME")
+tx2gene <- select(txdb, k, "GENEID", "TXNAME")
+head(k)
+
+#[1] "ENST00000456328.2" "ENST00000450305.2" "ENST00000473358.1" "ENST00000469289.1" "ENST00000607096.1"
+#[6] "ENST00000606857.1"
+
+head(tx2gene)
+
+#             TXNAME            GENEID
+#1 ENST00000456328.2 ENSG00000223972.5
+#2 ENST00000450305.2 ENSG00000223972.5
+#3 ENST00000473358.1 ENSG00000243485.5
+#4 ENST00000469289.1 ENSG00000243485.5
+#5 ENST00000607096.1 ENSG00000284332.1
+#6 ENST00000606857.1 ENSG00000268020.3
+
+dim(tx2gene)
+
+#[1] 227912      2
+
+length(k)
+
+#[1] 227912
+
+write.table(tx2gene, "tx2gene.gencode.v33.csv", sep = "\t", row.names = FALSE)
+
+```
+6.Complete the import for gene level and transcript level counts
+
+```r
+
+library("tximport")
+
+txi <- tximport(files, type = "salmon", tx2gene = tx2gene,ignoreAfterBar = TRUE)
+
+names(txi) 
+
+#[1] "abundance"           "counts"              "length"              "countsFromAbundance"
+
+#head(txi$counts) 
+
+txi.tx <- tximport(files, type = "salmon", txOut = TRUE,ignoreAfterBar = TRUE)
+
+names(txi.tx) 
+
+#[1] "abundance"           "counts"              "length"              "countsFromAbundance"
+
+#head(txi.tx$counts) 
+
+write.csv(txi.tx$counts,"full_transcript_counts.csv", row.names = FALSE)
+write.csv(txi$counts,"transcript_counts.csv", row.names = FALSE)
+
+
+```
+7.Prepare count and column data for design matrix using the metadata and the filtered transcript counts
+
+```r
+
+samples$stic # STIC subtype
+samples$platinumstatus
+
+samples$stic <- relevel(samples$stic, "No")  # relevel factors to control
+samples$platinumstatus <- relevel(samples$platinumstatus, "Sensitive")
+
+Salmon_counts <- txi.tx$counts
+#head(Salmon_counts, 3)
+
+Coldata <- samples
+
+Salmon_counts_r <- round(Salmon_counts, digits = 0)
+
+Salmon_counts_r <- Salmon_counts_r[ rowSums(Salmon_counts_r) > 1, ] 
+
+```
+
+8.Create the experiment design matrix and run DeSeq2
+
+```r
+                                      
+(ddsMat1 <- DESeqDataSetFromMatrix(countData = Salmon_counts_r,
+                                      colData = Coldata,
+                                      design = ~ stic ))
+                                      
+(ddsMat2 <- DESeqDataSetFromMatrix(countData = Salmon_counts_r,
+                                      colData = Coldata,
+                                      design = ~ platinumstatus))
+                                    
+dds1 <- DESeq(ddsMat1)
+dds2 <- DESeq(ddsMat2)
+
+
+```
+
+9.Extract results, order them by Log Fold-Change and p-adjusted value
+
+```r
+
+res_stic  <- results(dds1)
+res_plat  <- results(dds2, contrast=c("platinumstatus","Sensitive","Resistant"))
+
+resSig1 <- subset(res_stic, padj < 0.1)  
+head(resSig1[ order(resSig1$log2FoldChange), ]) # strongest downregulation
+resSig2 <- subset(res_plat, padj < 0.1)
+head(resSig2[ order(resSig2$log2FoldChange), ])
+
+
+head(resSig1[ order(resSig1$log2FoldChange, decreasing=TRUE), ]) # strongest upregulation 
+head(resSig2[ order(resSig2$log2FoldChange, decreasing=TRUE), ])
+
+resOrdered1 <- res_stic[order(res_stic$padj),]
+head(resOrdered1)
+
+resOrdered2 <- res_plat[order(res_plat$padj),]
+head(resOrdered2)
+
+
+
+```
+
+10.Extract the results to a dataframe of the top 100 results, write them to a .csv file
+along with the upregulated and downregulated genes
+
+```r
+
+resOrderedDF1 <- as.data.frame(resOrdered1)[1:100,]
+write.csv(resOrderedDF1,"DE_stic.csv", row.names = TRUE)
+
+resOrderedDF2 <- as.data.frame(resOrdered2)[1:100,]
+write.csv(resOrderedDF2,"DE_platinum.csv", row.names = TRUE)
+
+write.csv(resSig1[ order(resSig1$log2FoldChange), ],"DR_stic.csv", row.names=TRUE) # strongest downregulation
+write.csv(resSig2[ order(resSig2$log2FoldChange), ],"DR_platinum.csv",row.names=TRUE)
+write.csv(resSig1[ order(resSig1$log2FoldChange, decreasing=TRUE), ],"UR_stic.csv",row.names=TRUE) # strongest #upregulation
+write.csv(resSig2[ order(resSig2$log2FoldChange, decreasing=TRUE), ],"UR_platinum.csv",row.names=TRUE)
+
+```
+
+11.Create dataframes of the rownames of the results to extract the gene symbols
+
+```r
+
+genes_stic_de <- do.call(rbind, strsplit(rownames(resOrderedDF1), '\\|'))
+genes_plat_de <- do.call(rbind, strsplit(rownames(resOrderedDF2), '\\|'))
+genes_stic_updown <- do.call(rbind, strsplit(rownames(resOrdered1 ), '\\|'))
+genes_plat_updown <- do.call(rbind, strsplit(rownames(resOrdered2 ), '\\|'))
+
+```
+
+12.Create a volcano plot of the gene with the most signficant log fold change
+
+```r
+
+if (!requireNamespace('BiocManager', quietly = TRUE))
+    install.packages('BiocManager')
+    BiocManager::install('EnhancedVolcano')
+    
+library("EnhancedVolcano")
+
+
+EnhancedVolcano(resOrdered1,
+lab = genes_stic_updown[,6],
+x = 'log2FoldChange',
+y = 'pvalue',
+xlim = c(-5, 8),
+ylim = c(-1, 10),
+title = "STIC vs non STIC containing high-grade 
+serous carcinoma (HGSC)",
+)
+
+
+EnhancedVolcano(resOrdered2,
+lab = genes_plat_updown[,6],
+x = 'log2FoldChange',
+y = 'pvalue',
+xlim = c(-5, 8),
+ylim = c(-1, 7.8),
+title = "Platinum Resistant vs Platinum Sensitive 
+        high-grade serous carcinoma (HGSC)")
+
+
+```
+DEXSeq protocol for differential splicing analysis
+
+1.Install the required packages
+
+```r
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("DEXSeq")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("Biostrings")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("BiocParallel")
+
+library("DEXSeq")
+library("Biostrings")
+library("BioParallel")
+
+```
+
+2.Import the count files from the STAR alignment and DEXSeq HTSeq count script
+
+```r
+
+pythonScriptsDir = system.file( "python_scripts", package="DEXSeq" )
+list.files(pythonScriptsDir)
+
+#[1] "dexseq_count.py"              "dexseq_prepare_annotation.py"
+
+system.file( "python_scripts", package="DEXSeq", mustWork=TRUE )
+
+dir3 <- "E:/Users/cyber/Downloads/Deepa_Project/star_analysis/counted"
+dir4 <- "E:/Users/cyber/Downloads/Deepa_Project"
+
+countFiles = list.files(dir3, pattern=".txt$", full.names=TRUE)
+basename(countFiles)
+
+```
+
+3. Flatten the gff file and create a dataframe for sample data
+
+```r
+
+flattenedFile = list.files(dir4, pattern="gff$", full.names=TRUE)
+basename(flattenedFile)
+
+samples <- read.csv(file.path("D:","Users","deepa","Downloads", "SraRunTable.txt"), header = TRUE)
+samples
+
+sampleTable = data.frame(samples[c(1,18,23,30)])
+
+```
+
+4.Pull out which samples have certain conditions to build a small design matrix
+
+```r
+
+sampleTable[sampleTable$platinumstatus == 'Resistant' ,]
+sampleTable[sampleTable$platinumstatus == 'Sensitive' ,]
+
+sampleTable[sampleTable$stic == 'Yes' ,]
+sampleTable[sampleTable$stic == 'No' ,]
+
+selected_plat_samples <- data.frame(sampleTable[c(18,19,21,25,27,32,60,64,65,67,69,72,76,77,81,82),])
+selected_stic_samples <- data.frame(sampleTable[28:47,])
+countFiles_plat = countFiles[c(18,19,21,25,27,32,60,64,65,67,69,72,76,77,81,82)] #all have stic
+countFiles_stic = countFiles[28:47] #all are platinum sensitive
+
+basename((countFiles_stic))
+basename((countFiles_plat))
+
+```
+5.Create matrix files for the DEXSeq analysis
+
+   dxd1 = STIC comparision
+   dxd2 = Platinum Resistance comparison
+
+```r
+
+dxd1 = DEXSeqDataSetFromHTSeq(
+  countFiles_stic,
+  sampleData=selected_stic_samples,
+  design= ~ Run + exon + stic:exon,
+  flattenedfile=flattenedFile )
+
+dxd2 = DEXSeqDataSetFromHTSeq(
+  countFiles_plat,
+  sampleData=selected_plat_samples,
+  design= ~ Run + exon + platinumstatus:exon,
+  flattenedfile=flattenedFile )
+
+#colData(dxd1)
+#colData(dxd2)
+
+#head( counts(dxd1), 5 )
+#head( counts(dxd2), 5 )
+
+#head( featureCounts(dxd1), 5 )
+#head( featureCounts(dxd2), 5 )
+
+#head( rowRanges(dxd1), 3 )
+#head( rowRanges(dxd2), 3 )
+
+```
+
+6.Estimate size factors and filter out genes with 0 counts across all exons. Save the results to an R object.
+
+
+```r
+
+
+dxd1 = estimateSizeFactors(dxd1) # 1 = stic  
+dxd2 = estimateSizeFactors(dxd2 ) # 2 = platinum
+
+
+dxd1 <- dxd1[rowSums(counts(dxd1)) > 0,]
+dxd2 <- dxd2[rowSums(counts(dxd2)) > 0,]
+
+saveRDS(dxd1,"dexseq_stic.rds")
+saveRDS(dxd2,"dexseq_platinum.rds")
+
+```
+
+7.Run dispersion estimations on the saved R object assigning 3 cores for   
+  parallel computing. Test for differential exon usage. Assign results to a  
+  new variable
+   
+```r
+
+dxd1 = estimateDispersions( readRDS("dexseq_stic.rds"),quiet=FALSE,BPPARAM=SnowParam(3))
+dxd2 = estimateDispersions( readRDS("dexseq_platinum.rds"),quiet=FALSE,BPPARAM=SnowParam(3))
+
+dxd1 = testForDEU( dxd1 )
+dxd2 = testForDEU( dxd2 )
+
+dxd1 = estimateExonFoldChanges( dxd1, fitExpToVar="stic")
+dxd2 = estimateExonFoldChanges( dxd2, fitExpToVar = "platinumstatus")
+
+dxr1 = DEXSeqResults( dxd1 )
+dxr2 = DEXSeqResults( dxd2 )
+
+```
+
+8.How many results are significant for the adjusted p-value?
+
+```r
+
+table ( dxr1$padj < 0.1 )
+
+# FALSE   TRUE 
+#104053    624 
+
+table ( dxr2$padj < 0.1 )
+
+#FALSE   TRUE 
+#180801  200 
+
+table(tapply(dxr1$padj < 0.1,dxr1$groupID,any))
+
+#FALSE  TRUE 
+#2283   395
+
+table(tapply(dxr2$padj < 0.1,dxr2$groupID,any))
+
+#FALSE  TRUE 
+#3364   150 
+
+dxr1Sig <- subset(dxr1, padj < 0.1) 
+dxr2Sig <- subset(dxr2, padj < 0.1) 
+
+```
+
+9.Which genes shows the most significant log fold changes?
+
+```r
+head(dxr1Sig[ order(dxr1Sig$log2fold_Yes_No), ]) # strongest downregulation 
+head(dxr1Sig[ order(dxr1Sig$log2fold_Yes_No, decreasing=TRUE), ]) # strongest upregulation 
+
+head(dxr2Sig[ order(dxr2Sig$log2fold_Sensitive_Resistant), ]) # strongest downregulation 
+head(dxr2Sig[ order(dxr2Sig$log2fold_Sensitive_Resistant, decreasing=TRUE), ]) # strongest upregulation 
+
+```
+
+10.Genes are ordered according to adjusted p-value and log Fold-Change and written to .csv files.     
+The results are saved to an r object.
+
+```r
+
+resOrdered_dxr1 <- dxr1[order(dxr1$padj),]
+resOrdered_dxr2 <- dxr2[order(dxr2$padj),]
+head(resOrdered_dxr1)
+head(resOrdered_dxr2)
+
+write.csv(resOrdered_dxr1, "stic_diff_splice.csv")
+write.csv(resOrdered_dxr2, "plat_diff_splice.csv")
+
+saveRDS(dxr1,"dexseq_stic_results.rds")
+saveRDS(dxr2,"dexseq_platinum_results.rds")
+
+dexseq_stic_results <- readRDS("dexseq_stic_results.rds")
+dexseq_platinum_results <- readRDS("dexseq_platinum_results.rds")
+dxr1 <- readRDS("dexseq_stic_results.rds")
+dxr2 <- readRDS("dexseq_platinum_results.rds")
+
+
+```
+
+11.Plotting the results for all significant genes for both experiments. The  
+  results will be saved in html files in the working directory
+    
+```r
+
+DEXSeqHTML( dexseq_stic_results, FDR=0.1, color=c("#FF000080", "#0000FF80"),fitExpToVar="stic" )
+DEXSeqHTML( dexseq_platinum_results, FDR=0.1, color=c("#FF000080", "#0000FF80"),fitExpToVar="platinumstatus" )
+
+```
+
+Isoform Switching Analysis with IsoformAnalyzeR
+
+
+1.Installation of required packages 
+
+```r
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("IsoformSwitchAnalyzeR")
+
+library("IsoformSwitchAnalyzeR")
+
+```
+
+2.Reading in sample table and creating variables as character vectors
+
+```r
+
+samples <- read.csv(file.path("E:","Users","cyber","Downloads","Deepa_Project","SraRunTable.txt"), header = TRUE)
+samples_new <- samples[c(14,16:38,40:85),]
+samples_run <- samples_new$Run
+samples_run <- as.vector(samples_run)
+condition_stic <- as.character(samples_new$stic)
+condition_plat <- as.character(samples_new$platinumstatus)
+
+```
+
+3.Assign variables with the directories for the Salmon quant files.
+
+```r
+dir2 <- "E:/Users/cyber/Downloads/Deepa_Project/salmon_analysis"
+dir5 <- "E:/Users/cyber/Downloads/Deepa_Project/star_analysis"
+dir6 <- "E:/Users/cyber/Downloads/Deepa_Project/salmon_analysis/quants"
+
+```
+
+4.Import Salmon quant files
+
+```r
+
+salmonQuant <- importIsoformExpression(
+  parentDir = (dir6),
+  addIsofomIdAsColumn = TRUE)
+
+```
+5.Create design for comparing ovarian cancer with STIC and without
+
+```r
+
+myDesign_stic <- data.frame(
+  sampleID = colnames(salmonQuant$abundance)[-1],
+  condition = c("Yes", "No",  "No",  "Yes", "No",  "Yes", "No",  "No",  "No",  "No",  "Yes" ,"No" , "No",  "No" , "No",  "No",  "No",  "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "No",  "Yes", "Yes", "Yes",
+   "Yes", "No",  "No",  "No",  "Yes", "Yes", "Yes", "Yes", "No" , "Yes", "No" , "Yes", "Yes", "No",  "No" , "Yes", "Yes", "No",  "No",  "No",  "Yes", "No",  "No" , "No",  "No",  "No",  "No", 
+   "Yes", "Yes", "No",  "No",  "Yes", "Yes", "No",  "No",  "Yes", "Yes", "Yes", "Yes", "Yes", "No",  "Yes", "No",  "Yes", "Yes", "No",  "Yes", "Yes", "Yes", "Yes", "Yes", "No",  "No",  "Yes",
+   "Yes", "No",  "No",  "No")
+)
+
+```
+
+6.Create a new samples set for the comparision between the platinum
+senstive and resistant, excluding those with unknown status
+
+```r
+
+salmonQuant_new <- salmonQuant$abundance[c(1,15,17:39,41:86)]
+salmonQuant_newcount <- salmonQuant$counts[c(1,15,17:39,41:86)]
+
+myDesign_plat <- data.frame(
+  sampleID = colnames(salmonQuant_new)[-1],
+  condition = c("Sensitive",   "Sensitive",     "Sensitive",     "Sensitive" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Resistant",     "Sensitive",     "Resistant" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Resistant",     "Sensitive",     "Resistant",     "Sensitive" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Resistant",     "Sensitive",     "Sensitive",     "Sensitive" ,   
+                 "Resistant",     "Sensitive",     "Sensitive",     "Resistant",     "Sensitive",     "Resistant",     "Resistant",     "Sensitive",     "Resistant" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Resistant",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive" ,   
+                 "Sensitive",     "Sensitive",     "Sensitive",     "Sensitive" )
+)
+
+```
+
+7.Create switchlists for both experiments, with .gtf and fasta files from GENCODE
+
+```r
+
+aSwitchList_stic <- importRdata(
+  isoformCountMatrix   = salmonQuant$counts,
+  isoformRepExpression = salmonQuant$abundance,
+  designMatrix         = myDesign_stic,
+  isoformExonAnnoation = file.path(dir5,"gencode.v33.annotation.gtf"),
+  isoformNtFasta       = file.path(dir2,"gencode.fa.gz"),
+  showProgress = FALSE
+)
+
+aSwitchList2_plat <- importRdata(
+  isoformCountMatrix   = salmonQuant_new,
+  isoformRepExpression = salmonQuant_newcount,
+  designMatrix         = myDesign_plat,
+  isoformExonAnnoation = file.path(dir5,"gencode.v33.annotation.gtf"),
+  isoformNtFasta       = file.path(dir2,"gencode.fa.gz"),
+  showProgress = FALSE
+)
+
+```
+
+8.Filter the lists to removed lowly expressed features 
+
+```r
+
+aSwitchListFiltered_stic <- preFilter(
+  switchAnalyzeRlist = aSwitchList_stic,
+  geneExpressionCutoff = 1,
+  isoformExpressionCutoff = 0,
+  removeSingleIsoformGenes = TRUE
+)
+
+aSwitchListFiltered_plat <- preFilter(
+  switchAnalyzeRlist = aSwitchList2_plat,
+  geneExpressionCutoff = 1,
+  isoformExpressionCutoff = 0,
+  removeSingleIsoformGenes = TRUE
+)
+
+aSwitchListFiltered_stic <- preFilter(aSwitchListFiltered_stic) # preFilter to remove lowly expressed features
+aSwitchListFiltered_plat <- preFilter(aSwitchListFiltered_plat) # preFilter to remove lowly expressed features
+
+```
+9.Run isoform switch test with DEXSeq for both experiments
+
+```r
+aSwitchListAnalyzed_plat <- isoformSwitchTestDEXSeq(
+  switchAnalyzeRlist = aSwitchListFiltered_plat,
+  reduceToSwitchingGenes=TRUE
+)
+
+aSwitchListAnalyzed_stic <- isoformSwitchTestDEXSeq(
+  switchAnalyzeRlist = aSwitchListFiltered_stic,
+  reduceToSwitchingGenes=TRUE
+)
+
+```
+
+10.Run part 1 of the isoform Switch Analysis
+
+```r
+
+switch_analysis_stic <- isoformSwitchAnalysisPart1(aSwitchListFiltered_stic)
+switch_analysis_plat <- isoformSwitchAnalysisPart1(aSwitchListFiltered_plat)
+
+```
+11.Run combined analysis 
+
+```r
+
+switch_analysis_stic_compD <- isoformSwitchAnalysisCombined(aSwitchListFiltered_stic,switchTestMethod='DEXSeq')
+switch_analysis_plat_compD <- isoformSwitchAnalysisCombined(aSwitchListFiltered_plat,switchTestMethod='DEXSeq')
+
+```
+
+12.Run isoform switch test with DRIMSeq for both experiments
+
+```r
+
+aSwitchListAnalyzed_plat_alt <- isoformSwitchTestDRIMSeq(
+  switchAnalyzeRlist = aSwitchListFiltered_plat,
+  reduceToSwitchingGenes=TRUE
+)
+
+#  Step 1 of 6: Creating DM data object... -->
+#  Step 2 of 6: Filtering DM data object... -->
+#  Step 3 of 6: Estimating precision paramter (this may take a while)... -->
+#  Step 4 of 6: Fitting linear models (this may take a while)... -->
+#  Step 5 of 6: Testing pairwise comparison(s)... -->
+#  Step 6 of 6: Preparing output... -->
+#  Result added switchAnalyzeRlist -->
+#  An isoform switch analysis was performed for 2007 gene comparisons (9%). -->
+#  Done -->
+#  Warning message: -->
+#    In isoformSwitchTestDRIMSeq(switchAnalyzeRlist = aSwitchListFiltered_plat,  : -->
+#                                  Youc might want to consider using isoformSwitchTestDEXSeq() instead.  -->
+#                                The DEXSeq implementation have been shown to superiour to DRIMSeq  -->
+#                                on all paramters (except runtime for large number of samples)  -->
+#                                by Love et al 2018 (F1000) - results we can replicate. -->
+
+```
+13.Run part 1 of the isoform Switch Analysis with DRIMSeq
+
+```r
+
+aSwitchListAnalyzed_stic_alt <- isoformSwitchTestDRIMSeq(
+  switchAnalyzeRlist = aSwitchListFiltered_stic,
+  reduceToSwitchingGenes=TRUE
+)
+
+
+# Step 1 of 6: Creating DM data object... 
+# Step 2 of 6: Filtering DM data object... 
+# Step 3 of 6: Estimating precision paramter (this may take a while)...
+# Step 4 of 6: Fitting linear models (this may take a while)...
+# Step 5 of 6: Testing pairwise comparison(s)... 
+# Step 6 of 6: Preparing output... 
+# Result added switchAnalyzeRlist 
+# An isoform switch analysis was performed for 12091 gene comparisons (89%). 
+# Done -->
+# Warning message: -->
+#   In isoformSwitchTestDRIMSeq(switchAnalyzeRlist = aSwitchListFiltered_stic,  
+#                                 Youc might want to consider using isoformSwitchTestDEXSeq() instead.  
+#                               The DEXSeq implementation have been shown to superiour to DRIMSeq  
+#                               on all paramters (except runtime for large number of samples)  
+#                              by Love et al 2018 (F1000) - results we can replicate. 
+
+```
+
+14.Run the full isoform Switch Analysis with DRIMSeq
+
+```r
+
+switch_analysis_stic_compDR <- isoformSwitchAnalysisCombined(aSwitchListFiltered_stic,switchTestMethod='DRIMSeq')
+switch_analysis_plat_compDR <- isoformSwitchAnalysisCombined(aSwitchListFiltered_plat,switchTestMethod='DRIMSeq')
+
+```
+13. Extract the switchlist summary and analyze the ORFs for NMD events
+
+```r
+
+extractSwitchSummary(aSwitchListAnalyzed_plat_alt)
+
+#  Comparison nrIsoforms nrSwitches nrGenes
+#1 Senstive vs Resistant 2         1     1
+
+
+extractSwitchSummary(aSwitchListAnalyzed_stic_alt)
+
+#  Comparison nrIsoforms nrSwitches nrGenes
+#1  No vs Yes         17         10      10
+
+exampleSwitchListAnalyzed_plat <- analyzeORF(
+  aSwitchListAnalyzed_plat_alt,
+  orfMethod = "longest",
+  # genomeObject = Hsapiens, # not necessary since sequences are already stored in the switchAnalyzeRlist
+  showProgress=FALSE
+)
+
+exampleSwitchListAnalyzed_stic <- analyzeORF(
+  aSwitchListAnalyzed_stic_alt,
+  orfMethod = "longest",
+  # genomeObject = Hsapiens, # not necessary since sequences are already stored in the switchAnalyzeRlist
+  showProgress=FALSE
+)
+
+#exampleSwitchListAnalyzed_plat$orfAnalysis
+#exampleSwitchListAnalyzed_stic$orfAnalysis
+
+```
+
+15.Write results to .csv file for easy loading
+
+```r
+
+write.csv(exampleSwitchListAnalyzed_plat$orfAnalysis, "switchlist_plat.csv")
+write.csv(exampleSwitchListAnalyzed_stic$orfAnalysis, "switchlist_stic.csv")
+
+```
+
+16.Load results in to check for PTC events
+
+```r
+
+switchlist_plat <- read.csv("switchlist_plat.csv",header=TRUE)
+switchlist_stic <- read.csv("switchlist_stic.csv",header=TRUE)
+
+```
+
+17.Check for PTC events - since these are ensembl transcript IDS and 
+there are not many of them, we will look for confirmed NMD transcripts in EnsEMBL.
+
+```r
+
+switchlist_plat[switchlist_plat$PTC=="TRUE",]
+
+# X        isoform_id orfTransciptStart orfTransciptEnd orfTransciptLength orfStarExon orfEndExon 
+# 1 1 ENST00000314088.6                89             478                390           1          1 
+# 2 2 ENST00000377791.3                89             478                390           1          1 
+#   orfStartGenomic orfEndGenomic stopDistanceToLastJunction stopIndex  PTC 
+# 1        26124233      26124622                        127        -1 TRUE 
+# 2        26124233      26124622                        127        -1 TRUE 
+
+switchlist_stic[switchlist_stic$PTC=="TRUE",]
+
+#  X        isoform_id orfTransciptStart orfTransciptEnd orfTransciptLength orfStarExon orfEndExon 
+# 11   11 ENST00000438329.5                71             709                639           1          6 
+# 23   23 ENST00000493862.5               348             776                429           3          6 
+# 30   30 ENST00000553392.5                62             373                312           1          3 
+# NA   NA              <NA>                NA              NA                 NA          NA         NA 
+# NA.1 NA              <NA>                NA              NA                 NA          NA         NA 
+# 36   36 ENST00000585253.1                66             263                198           1          1 
+# 37   37 ENST00000611699.1                34             672                639           1          6 
+#      orfStartGenomic orfEndGenomic stopDistanceToLastJunction stopIndex  PTC 
+# 11          37686393      37691333                         91        -1 TRUE 
+# 23          37688333      37691333                         91        -1 TRUE 
+# 30          27673169      27322031                        260        -3 TRUE 
+#- NA                NA            NA                         NA        NA   NA 
+# NA.1              NA            NA                         NA        NA   NA 
+# 36           5293582       5293385                        141        -1 TRUE 
+# 37          37686393      37691333                         91        -1 TRUE  
+
+```
+Analyzing differential expression at the gene level using counts from Salmon
+
+1.Install required packages
+
+```r
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install(c("RColorBrewer","pheatmap")
+
+library("RColorBrewer")
+library("pheatmap")
+
+install.packages("gplots")
+library("gplots")
+
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+```
+
+2.Set factor and re-level them
+
+```r
+
+samples$stic # STIC subtype
+samples$platinumstatus
+
+samples$stic <- relevel(samples$stic, "No")  # relevel factors to control
+samples$platinumstatus <- relevel(samples$platinumstatus, "Sensitive")
+
+```
+
+3.Assign gene counts from Salmon to a variable and convert to integers
+
+```r
+Salmon_counts_genes <- txi$counts
+Salmon_counts_genes_r <- round(Salmon_counts_genes, digits = 0)
+head(Salmon_counts_genes_r, 3)
+
+```
+
+4.Assign sample values to Column data for the design matrix. Run DESeq2 on both matrices
+
+```r
+
+Coldata <- samples
+
+ddsMat_genes_stic <- DESeqDataSetFromMatrix(countData = Salmon_counts_genes_r,
+                                      colData = samples,
+                                      design = ~ stic)
+                                      
+
+ddsMat_genes_plat <- DESeqDataSetFromMatrix(countData = Salmon_counts_genes_r,
+                                      colData = samples,
+                                      design = ~ platinumstatus)
+                                      
+dds_genes_stic <- DESeq(ddsMat_genes_stic)
+dds_genes_plat <- DESeq(ddsMat_genes_plat)
+
+```
+
+5.Extract the results, and create a list of EnsEMBL IDs without the period for mapping
+
+```r
+                                      
+res_stic_genes <- results(dds_genes_stic)
+res_plat_genes <- results(dds_genes_plat,contrast=c("platinumstatus","Sensitive","Resistant"))
+
+tmp1=gsub("\\..*","",row.names(res_stic_genes)) 
+tmp2=gsub("\\..*","",row.names(res_plat_genes)) 
+
+```
+
+6.Map gene symbol names to Ensembl IDs
+
+```r
+
+res_stic_genes$symbol <- mapIds(org.Hs.eg.db,
+		        keys=tmp1,
+		        column="SYMBOL",
+		        keytype="ENSEMBL",
+		        multiVals="first")
+		        
+res_plat_genes$symbol <- mapIds(org.Hs.eg.db,
+		        keys=tmp2,
+		        column="SYMBOL",
+		        keytype="ENSEMBL",
+		        multiVals="first")
+		        
+```
+7.Order the genes by p-adjusted value
+
+```r
+
+resOrderedstic_genes <- res_stic_genes[order(res_stic_genes$padj),]
+head(resOrderedstic_genes)
+
+# log2 fold change (MLE): stic Yes vs No  -->
+# Wald test p-value: stic Yes vs No  -->
+# DataFrame with 6 rows and 7 columns -->
+#                            baseMean    log2FoldChange             lfcSE              stat               pvalue -->
+#                           <numeric>         <numeric>         <numeric>         <numeric>            <numeric> -->
+# ENSG00000175426.11 60.1476992063448 -2.38718775149748 0.392389569085218 -6.08371868055199 1.17426569203121e-09 -->
+# ENSG00000269604.1  27.8084605832425 -3.06687805013354 0.557826533557303 -5.49790636629603 3.84326896373428e-08 -->
+# ENSG00000156414.19 217.212910612099  2.32176639737362 0.429366827307935  5.40741913372941 6.39393957088891e-08 -->
+# ENSG00000081479.15   1279.936232673  2.12485560539984 0.396803017781077  5.35493811836926  8.5585702744583e-08 -->
+# ENSG00000139364.10 457.915784588186  1.42737787739319 0.280384433569253  5.09078859772235 3.56577401708213e-07 -->
+# ENSG00000270117.1  3.01337949757616 -3.35558716081809 0.664559325084321 -5.04934177304987 4.43334960397832e-07 -->
+#                                    padj      symbol -->
+#                              <numeric> <character> -->
+# ENSG00000175426.11 5.35688266047716e-05       PCSK1 -->
+# ENSG00000269604.1   0.00087663043428297          NA -->
+# ENSG00000156414.19  0.00097228376428127       TDRD9 -->
+# ENSG00000081479.15 0.000976083543376283        LRP2 -->
+# ENSG00000139364.10  0.00325334089770539    TMEM132B -->
+# ENSG00000270117.1   0.00337074959306478          NA -->
+
+resOrderedplat_genes <- res_plat_genes[order(res_plat_genes$padj),]
+head(resOrderedplat_genes)
+
+# log2 fold change (MLE): platinumstatus Sensitive vs Resistant  -->
+# Wald test p-value: platinumstatus Sensitive vs Resistant  -->
+# DataFrame with 6 rows and 7 columns -->
+#                            baseMean    log2FoldChange             lfcSE              stat               pvalue -->
+#                           <numeric>         <numeric>         <numeric>         <numeric>            <numeric> -->
+# ENSG00000277947.1  34.3415741553661  23.2981583285406  2.50147535383125     9.31376689075 1.23377295142188e-20 -->
+# ENSG00000274611.3  17.0633558385543  22.7900713579707  2.61248637402343  8.72351778925158  2.6968969961869e-18 -->
+# ENSG00000235174.1  50.1964873327315  24.5412726107545  2.85815709791743  8.58639737774957 8.97388982184941e-18 -->
+# ENSG00000196581.11 508.912351117097 -3.93360585335673 0.597041913187451 -6.58849197430083 4.44316265694851e-11 -->
+# ENSG00000165973.19  78.752628578299 -3.70781701755345 0.602299255506587 -6.15610426819281 7.45561472532902e-10 -->
+# ENSG00000122824.11 62.0226876867215 -2.37693224552766 0.433370605388532 -5.48475650164748 4.14039322694085e-08 -->
+#                                    padj      symbol -->
+#                               <numeric> <character> -->
+# ENSG00000277947.1  4.20778265082433e-16          NA -->
+# ENSG00000274611.3  4.59888360274772e-14      TBC1D3 -->
+# ENSG00000235174.1  1.02018170791391e-13          NA -->
+# ENSG00000196581.11 3.78835156038073e-07       AJAP1 -->
+# ENSG00000165973.19 5.08547480414692e-06       NELL1 -->
+# ENSG00000122824.11 0.000235346851674696      NUDT10 -->
+```
+8.Save ordered results to .csv file
+
+```r
+
+resOrderedDFstic <- data.frame(resOrderedstic_genes)[1:100,]
+write.csv(resOrderedDFstic,"gene_stic.csv",row.names = TRUE)
+resOrderedDFplat <- data.frame(resOrderedplat_genes)[1:100,]
+write.csv(resOrderedDFplat,"gene_plat.csv",row.names = TRUE)
+
+```
+9.Complete variance stabilizing transformation and calculate assay distance. Save distances to dataframe
+
+```r
+
+rld_stic <- vst(dds_genes_stic, blind=FALSE)
+rld_platinum <- vst(dds_genes_plat, blind=FALSE)
+head(assay(rld_stic), 3)
+head(assay(rld_platinum ), 3)
+sampleDists <- dist( t( assay(rld_stic) ) )
+sampleDistsp <- dist( t( assay(rld_platinum) ) )
+
+sample_data_stic <- data.frame(assay(rld_stic))
+sample_data_plat <- data.frame(assay(rld_platinum ))
+
+```
+
+10.Calculate variances for the samples and select the top 300
+
+```r
+
+vars=apply(sample_data_stic,1,var)
+varsp=apply(sample_data_plat,1,var)
+
+select=order(vars,decreasing=T)[1:300]
+selectp=order(varsp,decreasing=T)[1:300]
+
+```
+
+11.Calculate distance between genes, select sample distances by top 300 variances
+
+```r
+assays_stic <- sample_data_stic[select,]
+geneDists <- dist(assays_stic)
+
+assays_plat<-sample_data_plat[selectp,]
+geneDistsp <- dist(assays_plat)
+
+```
+
+12.Obtain the EnsEMBL row names without period for gene mapping. Map genes symbols to rownames. 
+
+```r
+
+tmp3=gsub("\\..*","",row.names(assays_stic))
+tmp4=gsub("\\..*","",row.names(assays_plat))
+
+
+assays_stic$symbol <- mapIds(org.Hs.eg.db,
+		        keys=tmp3,
+		        column="SYMBOL",
+		        keytype="ENSEMBL",
+		        multiVals="first")
+		        
+assays_plat$symbol <- mapIds(org.Hs.eg.db,
+		        keys=tmp4,
+		        column="SYMBOL",
+		        keytype="ENSEMBL",
+		        multiVals="first")
+
+```
+13.Carry out clustering for samples and genes (suffix p indicates platinum experiments)
+
+```r
+
+hc <- hclust(sampleDists,method="ward.D2")
+hcp <- hclust(sampleDistsp,method="ward.D2")
+hr <- hclust(geneDists,method="ward.D2")
+hrp <- hclust(geneDistsp,method="ward.D2")
+
+```
+14. Cluster samples (hc) and genes (hr), (suffix p indicates platinum experiments) and draw plots
+
+```r
+
+plot(hc,cex=0.6,labels=samples$stic,hang= -1) 
+clusters_stic <- cutree(hc, h = 600)
+rect.hclust(hc, h=600)
+
+plot(hcp,cex=0.6,labels=samples$platinum,hang = -1) 
+clusters_plat <- cutree(hcp, h = 600)
+rect.hclust(hcp, h=600)
+
+plot(hr,cex=0.6,labels=assays_stic$symbol,hang = -1) 
+clusters_stic_genes <- cutree(hr, h = 200)
+rect.hclust(hr, h=200)
+
+plot(hrp,cex=0.6, labels=assays_plat$symbol,hang = -1) 
+clusters_plat_genes <- cutree(hrp, h = 200)
+rect.hclust(hrp, h=200)
+
+rect.hclust(hr, h=300)
+
+clusters_gene_stic <- cutree(hr, h = 300)
+rect.hclust(hrp, h=300)
+clusters_gene_plat <- cutree(hrp, h = 300)
+
+```
+
+15.Assign row and column color according to tree cutting. 
+Plot the heatmap for platinum sensitivity
+
+```r
+
+ccol = brewer.pal(10,"Paired")[clusters_plat]
+clusters_gene_plat <- cutree(hcp,h=600)
+table(true=samples$platinumstatus,cluster=clusters_plat)
+
+clusters_gp <- cutree(hrp, h=200)
+rect.hclust(hr, h=200)
+clusters_gp[1:5]
+rcol = brewer.pal(10,"Paired")[clusters_gp]
+
+
+heatmap.2(as.matrix(assays_plat[1:85]),
+          Rowv=as.dendrogram(hrp), 
+          Colv=as.dendrogram(hcp),
+          col=redgreen(100),
+          scale="row",
+          margins = c(7, 7),
+          cexCol = 0.8,
+          cexRow = 0.7,
+          labRow = assays_plat$symbol,
+          labCol = samples$platinumstatus,
+          main = "Clustering of Genes and Samples 
+  comparing Platinum sensitivity",
+          trace = "none",ColSideColors=ccol,RowSideColors=rcol)
+
+legend("topleft",legend=1:7,pch=20,col=brewer.pal(10,"Paired"))
+
+
+```
+
+16.Assign row and column color according to tree cutting. 
+Plot the heatmap for STIC comparison
+
+```r
+
+ccol = brewer.pal(10,"Paired")[clusters_stic]
+clusters_gene_stic <- cutree(hc,h=600)
+table(true=samples$stic,cluster=clusters_stic)
+
+clusters_gs <- cutree(hr, h=200)
+rect.hclust(hr, h=200)
+clusters_gs[1:5]
+rcol = brewer.pal(10,"Paired")[clusters_gs]
+
+heatmap.2(as.matrix(assays_stic[1:85]),
+          Rowv=as.dendrogram(hr), 
+          Colv=as.dendrogram(hc),
+          col=redgreen(100),
+          scale="row",
+          margins = c(7, 7),
+          cexCol = 0.8,
+          cexRow = 0.7,
+          labRow = assays_stic$symbol,
+          labCol = samples$stic,
+          main = "Clustering of Genes and Samples
+          of ovarian cancer with or without STICs",
+          trace = "none",ColSideColors=ccol,RowSideColors=rcol)
+
+legend("topleft",legend=1:7,pch=20,col=brewer.pal(10,"Paired"))
+
+
+
+```
+
+WGCNA analysis from Salmon gene level counts
+
+
+1.Install the required packages
+
+```r
+
+install.packages("preprocessCore")
+install.packages("WGCNA")
+library("preprocessCore")
+library("WGCNA")
+
+```
+
+2.Import the Salmon counts that were created at the gene level and round the counts up
+
+```r
+
+Salmon_counts_genes_r <- round(Salmon_counts_genes, digits = 0)
+
+```
+
+3.Filter the counts and run variance stabilising transformation convert into a dataframe
+
+```r
+
+Salmon_counts_genes_r_filt  <- Salmon_counts_genes_r [rowSums(Salmon_counts_genes) > 10,]
+head(Salmon_counts_genes_r_filt,3)
+
+vsc <- vst(Salmon_counts_genes_r_filt,blind = TRUE)
+
+
+head(vsc,3)
+sample_data_net <- data.frame(vsc) #converting the results to a dataframe
+
+```
+4.Check for outliers by clustering
+
+```r
+
+IAC=cor(sample_data_net,use="p")
+hist(IAC,sub=paste("Mean=",format(mean(IAC[upper.tri(IAC)]),digits=3)))
+cluster1=hclust(as.dist(1-IAC))
+
+plot(cluster1)
+
+```
+
+5.Flagging genes with too many missing values, keep the top 1000 genes and transpose the matrix
+
+```r
+
+gsg = goodSamplesGenes(sample_data_net, verbose = 5)
+gsg$allOK
+
+keepGenesExpr = rank(-rowMeans(sample_data_net))<=1000
+mydata<-sample_data_net[keepGenesExpr,]
+
+dataExpr<-t(mydata)
+
+
+cor <- WGCNA::cor # needed to run WGCNA in Rstudio
+
+```
+
+6.Create the clustering and plot the modules
+
+```r
+
+net = blockwiseModules(dataExpr, power = 7,
+                       TOMType = "signed", minModuleSize = 30,
+                       reassignThreshold =10, mergeCutHeight = 0.30,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase="TOM", verbose=3, ds=3)
+
+mergedColors = labels2colors(net$colors)
+
+
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+      
+
+```
+
+7.Obtain the gene symbols for the EnsEMBL IDs.
+
+```r
+
+tmp=gsub("\\..*","",colnames(dataExpr))
+
+colnames(dataExpr) <- mapIds(org.Hs.eg.db, # adding gene symbols
+                             keys=tmp,
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+```
+8.Assign the genes and tabulate which genes belong in which modules
+
+```r
+
+genes=colnames(dataExpr)
+moduleColors=labels2colors(net$colors)
+mymodules=cbind(genes,moduleColors)
+table(moduleColors)
+
+# moduleColors
+# grey turquoise  
+# 18       982 
+
+```
+9.Correlate the modules with phenotype in this case - platinum sensitivity vs platinum resistance 
+
+```r
+
+phenotype=list(samples$platinumstatus) 
+phenotype=as.numeric(unlist(samples$platinumstatus)) #1,Not available,#2 Resistant, #3 Sensitive 
+
+
+```
+10.Obtain Eigengenes and associate with the phenotype and load the TOM object
+
+```r
+
+MEs0=moduleEigengenes(dataExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, phenotype, use = "p")
+
+moduleTraitCor
+
+# MEturquoise 0.09852176 
+# MEgrey      0.06016450 
+
+moduleTraitPvalue=corPvalueStudent(moduleTraitCor, 11)
+
+moduleTraitPvalue
+
+# MEturquoise 0.7731994 
+# MEgrey      0.8605144 
+
+load("TOM-block.1.RData", verbose = FALSE)
+
+```
+11.Recalculate the topological overlap, select modules colors, and probes
+select  the topological overlap  
+
+```r
+
+TOM = TOMsimilarityFromExpr(dataExpr, power = 7)
+#Select modules 
+modules = c("turquoise","grey")
+# Select module probes 
+probes = genes
+inModule = is.finite(match(moduleColors, modules))
+modProbes = probes[inModule]
+modGenes = row.names(mydata)
+# Select the corresponding Topological Overlap 
+modTOM = TOM[inModule, inModule]
+dimnames(modTOM) = list(modProbes, modProbes)
+
+```
+12.Export the network into edge and node list files Cytoscape can read
+
+```r
+cyt = exportNetworkToCytoscape(modTOM,
+                               edgeFile = paste("CytoscapeInput-edges-", paste(modules, collapse="-"), ".txt", sep=""),
+                               nodeFile = paste("CytoscapeInput-nodes-", paste(modules, collapse="-"), ".txt", sep=""),
+                               weighted = TRUE,
+                               threshold = 0.32,
+                               nodeNames = modProbes,
+                               altNodeNames = modGenes,
+                               nodeAttr = moduleColors[inModule])
+
+```
+13.Repeat the steps by re-assigning the phenotypes for STIC positive/negative samples
+
+```r
+phenotype2=list(samples$stic) 
+phenotype2=as.numeric(unlist(samples$stic)) #1 No 2 Yes
+#get Eigengenes
+MEs0=moduleEigengenes(dataExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, phenotype2, use = "p")
+
+moduleTraitCor
+
+#                  [,1]
+#MEturquoise 0.13608035
+#MEgrey      0.05488571
+
+moduleTraitPvalue=corPvalueStudent(moduleTraitCor, 11)
+
+#moduleTraitPvalue
+
+#                 [,1]
+#MEturquoise 0.6899267
+#MEgrey      0.8726627
+
+#Recalculate topological overlap if needed
+TOM = TOMsimilarityFromExpr(dataExpr, power = 7)
+Select modules
+modules = c("turquoise","grey")
+#Select module probes
+probes = genes
+inModule = is.finite(match(moduleColors, modules))
+modProbes = probes[inModule]
+modGenes = row.names(mydata)
+#Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule]
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+                               edgeFile = paste("CytoscapeInput-edges-", paste(modules, collapse="-"), "2.txt", sep=""),
+                               nodeFile = paste("CytoscapeInput-nodes-", paste(modules, collapse="-"), "2.txt", sep=""),
+                               weighted = TRUE,
+                               threshold = 0.32,
+                               nodeNames = modProbes,
+                               altNodeNames = modGenes,
+                               nodeAttr = moduleColors[inModule])
+                               
+```
+
+GO annotations for differential expression/splicing results using GO.db 
+
+1.Install the required packages
+
+```r
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("GO.db")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("org.Hs.eg.db")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+library("org.Hs.eg.db")
+library("GO.db")
+
+```
+2.Obtain the GO, genenames and ontology for the genes and
+get the unique GO terms
+
+```r
+
+genes_stic_de[,6] 
+genes_plat_de[,6] 
+
+stic_GO <- select(org.Hs.eg.db,genes_stic_de[,6] ,
+                keytype = "SYMBOL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+
+stic_GO <- unique(stic_GO)
+un_stic_terms <- unique(stic_GO[,5])
+
+un_stic_terms
+
+# [1] "cysteine and histidine rich 1"                                   
+# [2] "carnitine palmitoyltransferase 1A"                               
+# [3] "cadherin 18"                                                     
+# [4] "survival of motor neuron 2, centromeric"                         
+# [5] "centrosomal protein 78"                                          
+# [6] "olfactory receptor family 1 subfamily D member 2"                
+# [7] "transmembrane protein 106C"                                      
+# [8] "BCL2 associated athanogene 6"                                    
+# [9] "titin"                                                           
+#[10] "ceramide transporter 1"                                          
+#[11] "glycine decarboxylase"                                           
+#[12] "cytoskeleton associated protein 5"                               
+#[13] "DEAD-box helicase 3 X-linked"                                    
+#[14] "DnaJ heat shock protein family (Hsp40) member B11"               
+#[15] "nuclear receptor subfamily 1 group H member 2"                   
+#[16] "long intergenic non-protein coding RNA 2432"                     
+#[17] "LDL receptor related protein 2"                                  
+#[18] "threonyl-tRNA synthetase 1"                                      
+#[19] "eukaryotic translation initiation factor 3 subunit H"            
+#[20] "rhabdomyosarcoma 2 associated transcript"                        
+#[21] "hemoglobin subunit epsilon 1"                                    
+#[22] "myosin light chain, phosphorylatable, fast skeletal muscle"      
+#[23] "forkhead box P1"                                                 
+#[24] "V-set and transmembrane domain containing 2B"                    
+#[25] "eukaryotic translation initiation factor 3 subunit L"            
+#[26] "leucine rich repeat and fibronectin type III domain containing 5"
+#[27] "FXYD domain containing ion transport regulator 7"                
+#[28] "chromosome 5 open reading frame 66"                              
+#[29] "retinoic acid receptor responder 1"                              
+#[30] "collagen type IX alpha 1 chain"                                  
+#[31] "cadherin 2"                                                      
+#[32] "anoctamin 1"                                                     
+#[33] "secretogranin V"                                                 
+#[34] "vault RNA 1-2"                                                   
+#[35] "protocadherin alpha 1"                                           
+#[36] "ubiquitin conjugating enzyme E2 A"                               
+#[37] "basonuclin 2"                                                    
+#[38] "cathepsin B"                                                     
+#[39] "insulin receptor substrate 4"                                    
+#[40] NA                                                                
+#[41] "chondroitin sulfate proteoglycan 4 pseudogene 10"                
+#[42] "ribosomal protein L31"                                           
+#[43] "ADAM metallopeptidase with thrombospondin type 1 motif 5"        
+#[44] "potassium inwardly rectifying channel subfamily J member 16"     
+#[45] "pleckstrin homology domain containing J1"                        
+#[46] "olfactomedin like 2A"                                            
+#[47] "SRY-box transcription factor 11"                                 
+#[48] "phosphoenolpyruvate carboxykinase 2, mitochondrial"              
+#[49] "transketolase like 1"                                            
+#[50] "proprotein convertase subtilisin/kexin type 1"                   
+#[51] "fibroblast growth factor receptor 1"                             
+#[52] "protocadherin 10"                                                
+#[53] "MAGE family member L2"                                           
+#[54] "sodium channel epithelial 1 delta subunit"                       
+#[55] "transmembrane protein 132B"                                      
+#[56] "insulin like growth factor 2 mRNA binding protein 1"             
+#[57] "CCAAT enhancer binding protein alpha"                            
+#[58] "NADH:ubiquinone oxidoreductase core subunit S7"                  
+#[59] "dopamine receptor D4"                                            
+#[60] "BCL2 interacting protein 3 pseudogene 17"                        
+#[61] "surfeit 4"                                                       
+#[62] "ankyrin repeat and sterile alpha motif domain containing 1B"     
+#[63] "serine/arginine repetitive matrix 2"                             
+#[64] "long intergenic non-protein coding RNA 1127"                     
+#[65] "fidgetin, microtubule severing factor"                           
+#[66] "small nucleolar RNA, H/ACA box 38B"                              
+#[67] "collagen type IX alpha 3 chain"                                  
+#[68] "MANSC domain containing 1"                                       
+#[69] "serine protease 33"                                              
+#[70] "ornithine decarboxylase antizyme 1"                              
+#[71] "protocadherin 11 X-linked"                                       
+#[72] "adhesion G protein-coupled receptor L3"                          
+#[73] "polypeptide N-acetylgalactosaminyltransferase 13"                
+#[74] "small nucleolar RNA, C/D box 14C"                                
+#[75] "transmembrane 9 superfamily member 3"                            
+#[76] "TatD DNase domain containing 2 pseudogene 3"                     
+#[77] "protein tyrosine phosphatase receptor type Q"                    
+#[78] "C-type lectin domain family 18 member B"                         
+#[79] "LHX1 divergent transcript"                                       
+#[80] "TatD DNase domain containing 2 pseudogene 2"                     
+#[81] "long intergenic non-protein coding RNA 514"                      
+#[82] "secreted and transmembrane 1"                                    
+#[83] "small nucleolar RNA host gene 29"                                
+#[84] "G protein-coupled receptor 39"                                   
+#[85] "microRNA 548f-2"                                                 
+#[86] "ventricular zone expressed PH domain containing 1"               
+#[87] "ATPase H+ transporting V0 subunit e2"                            
+#[88] "fibroblast growth factor 9"                                      
+#[89] "semaphorin 3E"    
+
+plat_GO <- select(org.Hs.eg.db,genes_plat_de[,6] ,
+                keytype = "SYMBOL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+plat_GO <- unique(plat_GO)
+
+un_plat_terms <- unique(plat_GO[,5])
+
+un_plat_terms
+
+# [1] "protein kinase C and casein kinase substrate in neurons 2"                                        
+# [2] "tubulin alpha 1b"                                                                                 
+# [3] "zinc finger protein 268"                                                                          
+# [4] "CD59 molecule (CD59 blood group)"                                                                 
+# [5] "mannosyl-oligosaccharide glucosidase"                                                             
+# [6] "methyl-CpG binding domain protein 1"                                                              
+# [7] "transient receptor potential cation channel subfamily M member 8"                                 
+# [8] "ubiquitin like with PHD and ring finger domains 1"                                                
+# [9] "glutamine amidotransferase like class 1 domain containing 3B"                                     
+#[10] "acyl-CoA dehydrogenase medium chain"                                                              
+#[11] "KAT8 regulatory NSL complex subunit 1"                                                            
+#[12] "eukaryotic translation initiation factor 4 gamma 1"                                               
+#[13] "sorting nexin 6"                                                                                  
+#[14] "mucin 1, cell surface associated"                                                                 
+#[15] "paralemmin"                                                                                       
+#[16] "fibroblast growth factor receptor 1"                                                              
+#[17] "maestro"                                                                                          
+#[18] "urothelial cancer associated 1"                                                                   
+#[19] "adaptor related protein complex 2 subunit alpha 1"                                                
+#[20] "doublecortin like kinase 1"                                                                       
+#[21] "dihydrofolate reductase"                                                                          
+#[22] "enhancer of zeste 2 polycomb repressive complex 2 subunit"                                        
+#[23] "semaphorin 4B"                                                                                    
+#[24] "major facilitator superfamily domain containing 4B"                                               
+#[25] "zinc finger protein 518B"                                                                         
+#[26] "solute carrier family 4 member 5"                                                                 
+#[27] "aminoadipate-semialdehyde dehydrogenase"                                                          
+#[28] "endosulfine alpha"                                                                                
+#[29] "small nucleolar RNA, C/D box 3D"                                                                  
+#[30] "THO complex 3"                                                                                    
+#[31] "FA complementation group B"                                                                       
+#[32] "potassium channel tetramerization domain containing 1"                                            
+#[33] "ryanodine receptor 3"                                                                             
+#[34] "ubiquitin like 4A"                                                                                
+#[35] "NIMA related kinase 4"                                                                            
+#[36] "calcium binding and coiled-coil domain 2"                                                         
+#[37] "cystathionine beta-synthase like"                                                                 
+#[38] "chitinase domain containing 1"                                                                    
+#[39] "roundabout guidance receptor 1"                                                                   
+#[40] "sodium voltage-gated channel alpha subunit 9"                                                     
+#[41] "lipoyltransferase 1"                                                                              
+#[42] "dynamin 1"                                                                                        
+#[43] "membrane associated guanylate kinase, WW and PDZ domain containing 3"                             
+#[44] "complement C4A (Rodgers blood group)"                                                             
+#[45] "phosphoinositide-3-kinase regulatory subunit 3"                                                   
+#[46] "synaptosome associated protein 47"                                                                
+#[47] "cAMP-dependent protein kinase inhibitor gamma"                                                    
+#[48] "tubulin tyrosine ligase like 7"                                                                   
+#[49] "sterile alpha motif domain containing 11"                                                         
+#[50] "aldehyde dehydrogenase 3 family member A2"                                                        
+#[51] "FTX transcript, XIST regulator"                                                                   
+#[52] "GRAM domain containing 2B"                                                                        
+#[53] "RAB3 GTPase activating protein catalytic subunit 1"                                               
+#[54] "calmodulin 1"                                                                                     
+#[55] "TBC1 domain family member 3"                                                                      
+#[56] "Thy-1 cell surface antigen"                                                                       
+#[57] "TAP binding protein"                                                                              
+#[58] "disco interacting protein 2 homolog A"                                                            
+#[59] "kinesin light chain 1"                                                                            
+#[60] "ribosomal protein L18"                                                                            
+#[61] "ribosomal protein S7"                                                                             
+#[62] "erythrocyte membrane protein band 4.1 like 2"                                                     
+#[63] "deleted in malignant brain tumors 1"                                                              
+#[64] "discs large MAGUK scaffold protein 1"                                                             
+#[65] "ankyrin 2"                                                                                        
+#[66] "interleukin 6 signal transducer"                                                                  
+#[67] "ribosomal protein L39 pseudogene 3"                                                               
+#[68] "GNAS complex locus"                                                                               
+#[69] "HLA complex group 18"                                                                             
+#[70] "TSC complex subunit 2"                                                                            
+#[71] "TCDD inducible poly(ADP-ribose) polymerase"                                                       
+#[72] "c-Maf inducing protein"                                                                           
+#[73] "Rho GTPase activating protein 21"                                                                 
+#[74] "multiple PDZ domain crumbs cell polarity complex component"                                       
+#[75] "cyclin dependent kinase like 5"                                                                   
+#[76] "ubiquitin conjugating enzyme E2 W"                                                                
+#[77] "calcium dependent secretion activator 2"                                                          
+#[78] "ATP synthase F1 subunit alpha"                                                                    
+#[79] "GPN-loop GTPase 1"                                                                                
+#[80] "SWI/SNF related, matrix associated, actin dependent regulator of chromatin, subfamily a, member 4"
+#[81] "fibronectin 1"                                                                                    
+#[82] "X inactive specific transcript"                                                                   
+#[83] "diacylglycerol kinase alpha"                                                                      
+#[84] "kynurenine 3-monooxygenase"                                                                       
+#[85] "VRK serine/threonine kinase 2"                                                                    
+#[86] NA                                                                                                 
+#[87] "ribosomal protein S3"                                                                             
+#[88] "fibrillin 1"                                                                                      
+#[89] "huntingtin interacting protein 1"                                                                 
+#[90] "adhesion G protein-coupled receptor L2"                                                           
+#[91] "microtubule associated monooxygenase, calponin and LIM domain containing 3"                       
+#[92] "UDP-glucose glycoprotein glucosyltransferase 2"                                                   
+#[93] "baculoviral IAP repeat containing 2"                                                              
+#[94] "DEAD-box helicase 3 X-linked"                                                                     
+#[95] "cell division cycle 42"                                                                           
+#[96] "interferon alpha and beta receptor subunit 2"                                                     
+#[97] "dynein axonemal heavy chain 11"                                                                   
+#[98] "patatin like phospholipase domain containing 4"                                                   
+#[99] "sarcolemma associated protein" 
+
+
+```
+3.Load the results for the DEXSeq genes and create ensembl
+ids without the period
+
+```r
+
+DEXSeq GO results 
+
+DEXSeq_stic_res <- read.csv("stic_diff_splice2.csv",header=TRUE)
+DEXSeq_stic_res <- DEXSeq_stic_res[1:200,]
+DEXSeq_plat_res <- read.csv("plat_diff_splice2.csv",header=TRUE)
+DEXSeq_plat_res <- DEXSeq_plat_res[1:200,]
+
+stic_DEX_temp <- gsub("\\..*","",DEXSeq_stic_res$groupID) 
+plat_DEX_temp <- gsub("\\..*","",DEXSeq_plat_res$groupID)
+
+
+
+```
+
+4.Obtain the unique gene names
+
+```r
+
+unique_res_s <- unique(stic_DEX_temp)
+unique_res_p<- unique(plat_DEX_temp)
+
+```
+5.Obtain the GO, genenames and ontology for the genes and
+get the unique GO terms and gene names
+
+```r
+
+DEXSeq_stic_go <- select(org.Hs.eg.db,unique_res_s ,
+                keytype = "ENSEMBL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+
+DEXSeq_plat_go <- select(org.Hs.eg.db,unique_res_p ,
+                keytype = "ENSEMBL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+                                            
+stic_genes_DEXSeq <- unique(DEXSeq_stic_go[,6])
+plat_genes_DEXSeq <- unique(DEXSeq_plat_go[,6])
+
+un_stic_terms_DEXSEQ <- unique(DEXSeq_stic_go[,5])
+
+un_stic_terms_DEXSEQ
+
+# [1] "actin gamma 1"                                                       
+# [2] "eukaryotic translation elongation factor 1 alpha 1"                  
+# [3] NA                                                                    
+# [4] "actin beta"                                                          
+# [5] "amyloid beta precursor protein"                                      
+# [6] "ribosomal protein S24"                                               
+# [7] "ribosomal protein L14"                                               
+# [8] "small nucleolar RNA, C/D box 15A"                                    
+# [9] "metastasis associated lung adenocarcinoma transcript 1"              
+# [10] "cytoplasmic polyadenylation element binding protein 1"               
+# [11] "microRNA 3652"                                                       
+# [12] "calnexin"                                                            
+# [13] "activated leukocyte cell adhesion molecule"                          
+# [14] "small nucleolar RNA, H/ACA box 31"                                   
+# [15] "SET nuclear proto-oncogene"                                          
+# [16] "small nucleolar RNA, C/D box 97"                                     
+# [17] "myotrophin"                                                          
+# [18] "nucleosome assembly protein 1 like 1"                                
+# [19] "integrator complex subunit 11"                                       
+# [20] "CD37 molecule"                                                       
+# [21] "stathmin 1"                                                          
+# [22] "DnaJ heat shock protein family (Hsp40) member A1"                    
+# [23] "matrin 3"                                                            
+# [24] "high mobility group nucleosomal binding domain 2"                    
+# [25] "ethylmalonyl-CoA decarboxylase 1"                                    
+# [26] "ribosomal protein S18"                                               
+# [27] "zinc finger protein 460"                                             
+# [28] "transducin beta like 1 X-linked receptor 1"                          
+# [29] "ribosomal protein L7"                                                
+# [30] "paternally expressed 10"                                             
+# [31] "lectin, mannose binding 1"                                           
+# [32] "DC-STAMP domain containing 1"                                        
+# [33] "FMRP translational regulator 1"                                      
+# [34] "microRNA 7705"                                                       
+# [35] "collagen type III alpha 1 chain"                                     
+# [36] "nucleolin"                                                           
+# [37] "ribosomal protein S20"                                               
+# [38] "non-POU domain containing octamer binding"                           
+# [39] "zinc finger protein 320"                                             
+# [40] "CDKN2B antisense RNA 1"                                              
+# [41] "acidic nuclear phosphoprotein 32 family member E"                    
+# [42] "heat shock protein 90 alpha family class B member 1"                 
+# [43] "IQ motif containing GTPase activating protein 1"                     
+# [44] "glyceraldehyde-3-phosphate dehydrogenase"                            
+# [45] "prostaglandin E synthase 3"                                          
+# [46] "ribosomal L1 domain containing 1"                                    
+# [47] "family with sequence similarity 3 member C"                          
+# [48] "epithelial cell adhesion molecule"                                   
+# [49] "basic transcription factor 3"                                        
+# [50] "AKNA domain containing 1"                                            
+# [51] "SERPINE1 mRNA binding protein 1"                                     
+# [52] "LUC7 like 3 pre-mRNA splicing factor"                                
+# [53] "ring finger protein 43"                                              
+# [54] "tonsoku like, DNA repair protein"                                    
+# [55] "G3BP stress granule assembly factor 1"                               
+# [56] "selenoprotein P"                                                     
+# [57] "vascular endothelial zinc finger 1"                                  
+# [58] "annexin A5"                                                          
+# [59] "annexin A1"                                                          
+# [60] "ribosomal protein L3"                                                
+# [61] "heat shock protein 90 alpha family class A member 1"                 
+# [62] "peptidylprolyl isomerase B"                                          
+# [63] "polycystin 1, transient receptor potential channel interacting"      
+# [64] "DAZ associated protein 2"                                            
+# [65] "MOB kinase activator 1A"                                             
+# [66] "RNA binding motif protein 39"                                        
+# [67] "transcription elongation factor A like 9"                            
+# [68] "ribosomal protein L35"                                               
+# [69] "5'-nucleotidase, cytosolic II"                                       
+# [70] "PAQR9 antisense RNA 1"                                               
+# [71] "RNA binding motif protein 25"                                        
+# [72] "prostaglandin reductase 1"                                           
+# [73] "FAST kinase domains 1"                                               
+# [74] "oxysterol binding protein like 8"                                    
+# [75] "actin related protein 2/3 complex subunit 4"                         
+# [76] "hypoxia up-regulated 1"                                              
+# [77] "density regulated re-initiation and release factor"                  
+# [78] "glyceraldehyde-3-phosphate dehydrogenase, spermatogenic"             
+# [79] "negative regulator of ubiquitin like proteins 1"                     
+# [80] "nuclear receptor binding SET domain protein 2"                       
+# [81] "mortality factor 4 like 2"                                           
+# [82] "collagen type VI alpha 3 chain"                                      
+# [83] "amyloid beta precursor like protein 2"                               
+# [84] "calreticulin"                                                        
+# [85] "ribosomal protein L7a"                                               
+# [86] "translocation associated membrane protein 1"                         
+# [87] "beta-1,3-N-acetylgalactosaminyltransferase 1 (globoside blood group)"
+# [88] "serine and arginine rich splicing factor 5"                          
+# [89] "RAD21 cohesin complex component"                                     
+# [90] "sphingomyelin phosphodiesterase acid like 3B"                        
+# [91] "CD164 molecule"                                                      
+# [92] "collagen type I alpha 2 chain"                                       
+# [93] "ezrin"                                                               
+# [94] "lysine acetyltransferase 6B"                                         
+# [95] "myosin heavy chain 9"                                                
+# [96] "Y-box binding protein 1"                                             
+# [97] "secreted protein acidic and cysteine rich"                           
+# [98] "platelet activating factor acetylhydrolase 1b catalytic subunit 2"   
+# [99] "EP300 interacting inhibitor of differentiation 1"                    
+#[100] "TSPY like 1"                                                         
+#[101] "SPT3 homolog, SAGA and STAGA complex component"                      
+#[102] "microRNA 421"                                                        
+#[103] "matrix metallopeptidase 14"       
+
+un_plat_terms_DEXSEQ <- unique(DEXSeq_plat_go[,5])
+
+un_plat_terms_DEXSEQ 
+
+#  [1] "fibronectin 1"                                                         
+#  [2] "complement C1s"                                                        
+#  [3] "doublecortin domain containing 2"                                      
+#  [4] "collectin subfamily member 12"                                         
+#  [5] "G1 to S phase transition 1"                                            
+#  [6] "RNFT1 divergent transcript"                                            
+#  [7] "microRNA 636"                                                          
+#  [8] "ribosomal protein S5"                                                  
+#  [9] "caldesmon 1"                                                           
+# [10] "RNA polymerase II subunit B"                                           
+# [11] "myosin heavy chain 10"                                                 
+# [12] "LDL receptor related protein 1"                                        
+# [13] "complement C1r"                                                        
+# [14] "NIMA related kinase 5"                                                 
+# [15] "RNA binding motif protein 4"                                           
+# [16] "coiled-coil domain containing 80"                                      
+# [17] "sarcoglycan epsilon"                                                   
+# [18] "3-hydroxy-3-methylglutaryl-CoA reductase"                              
+# [19] "ubiquitin specific peptidase 34"                                       
+# [20] "programmed cell death 2 like"                                          
+# [21] "thrombospondin 2"                                                      
+# [22] "microRNA 6751"                                                         
+# [23] "MDM2 proto-oncogene"                                                   
+# [24] "TIMP metallopeptidase inhibitor 2"                                     
+# [25] "serrate, RNA effector molecule"                                        
+# [26] "ENAH actin regulator"                                                  
+# [27] "SRSF protein kinase 2"                                                 
+# [28] NA                                                                      
+# [29] "aspartate beta-hydroxylase"                                            
+# [30] "small nucleolar RNA, C/D box 10"                                       
+# [31] "catenin beta 1"                                                        
+# [32] "protein phosphatase 5 catalytic subunit"                               
+# [33] "PTPRF interacting protein alpha 1"                                     
+# [34] "transgelin"                                                            
+# [35] "ALG12 alpha-1,6-mannosyltransferase"                                   
+# [36] "alpha-1,3-mannosyl-glycoprotein 2-beta-N-acetylglucosaminyltransferase"
+# [37] "myosin light chain 5"                                                  
+# [38] "ASH2 like, histone lysine methyltransferase complex subunit"           
+# [39] "MSC antisense RNA 1"                                                   
+# [40] "heme oxygenase 2"                                                      
+# [41] "biotinidase"                                                           
+# [42] "decorin"                                                               
+# [43] "trehalase"                                                             
+# [44] "vimentin"                                                              
+# [45] "myosin light chain kinase"                                             
+# [46] "bromodomain adjacent to zinc finger domain 2B"                         
+# [47] "ZPR1 zinc finger"                                                      
+# [48] "ATP binding cassette subfamily C member 1"                             
+# [49] "coronin 1B"                                                            
+# [50] "dermokine"                                                             
+# [51] "nucleotide binding protein 1"                                          
+# [52] "polypeptide N-acetylgalactosaminyltransferase 1"                       
+# [53] "coiled-coil domain containing 13"                                      
+# [54] "thrombospondin 3"                                                      
+# [55] "A-kinase anchoring protein 8 like"                                     
+# [56] "cadherin 3"                                                            
+# [57] "C-terminal Src kinase"                                                 
+# [58] "kinesin family member 23"                                              
+# [59] "chromosome 1 open reading frame 43"                                    
+# [60] "DEAH-box helicase 16"                                                  
+# [61] "chromosome 12 open reading frame 75"                                   
+# [62] "NEDD4 binding protein 2 like 2"                                        
+# [63] "uncharacterized LOC101927267"                                          
+# [64] "IER3 antisense RNA 1"                                                  
+# [65] "cullin 1"                                                              
+# [66] "phosphatidylinositol transfer protein alpha"                           
+# [67] "centromere protein F"                                                  
+# [68] "methyltransferase like 5"                                              
+# [69] "glucosamine (UDP-N-acetyl)-2-epimerase/N-acetylmannosamine kinase"     
+# [70] "BicC family RNA binding protein 1"                                     
+# [71] "laminin subunit gamma 2"                                               
+# [72] "tumor protein p53 binding protein 1"                                   
+# [73] "laminin subunit beta 1"                                                
+# [74] "cell division cycle associated 7 like"                                 
+# [75] "zinc finger protein 621"                                               
+# [76] "euchromatic histone lysine methyltransferase 2"                        
+# [77] "long intergenic non-protein coding RNA 1416"                           
+# [78] "laminin subunit alpha 3"                                               
+# [79] "deleted in primary ciliary dyskinesia homolog (mouse)"                 
+# [80] "DIS3 homolog, exosome endoribonuclease and 3'-5' exoribonuclease"      
+# [81] "zinc finger MYND-type containing 11"                                   
+# [82] "TSC22 domain family member 2"                                          
+# [83] "collagen type XVIII alpha 1 chain"                                     
+# [84] "adenosine deaminase RNA specific"                                      
+# [85] "trafficking kinesin protein 2"                                         
+# [86] "ribosomal protein L22 like 1"                                          
+# [87] "WD repeat domain 3"                                                    
+# [88] "SIX homeobox 1"                                                        
+# [89] "HUS1 checkpoint clamp component"                                       
+# [90] "protein tyrosine kinase 7 (inactive)"                                  
+# [91] "splicing factor proline and glutamine rich"                            
+# [92] "protein phosphatase 2 phosphatase activator"                           
+# [93] "proliferation-associated 2G4"                                          
+# [94] "shootin 1"                                                             
+# [95] "t-complex 10 like"                                                     
+# [96] "alcohol dehydrogenase 1C (class I), gamma polypeptide"                 
+# [97] "TatD DNase domain containing 1"                                        
+# [98] "nuclear receptor binding SET domain protein 2"                         
+# [99] "tropomodulin 1"                                                        
+#[100] "small nucleolar RNA, C/D box 97"                                       
+#[101] "glutamate metabotropic receptor 4"                                     
+#[102] "small RNA binding exonuclease protection factor La"                    
+#[103] "AHNAK nucleoprotein 2"                                                 
+#[104] "NADH:ubiquinone oxidoreductase subunit B2"                             
+#[105] "ATPase 13A3"                                                           
+#[106] "solute carrier family 4 member 1 adaptor protein"                      
+#[107] "collagen type I alpha 2 chain"                                         
+#[108] "inositol polyphosphate phosphatase like 1"                             
+#[109] "tubulin alpha 1a"                                                      
+#[110] "cholinergic receptor nicotinic beta 1 subunit"                         
+#[111] "myosin light chain 6B"                                                 
+#[112] "small nucleolar RNA, C/D box 19B"                                      
+#[113] "striatin 3"                                                            
+#[114] "lysine methyltransferase 2E"                                           
+#[115] "KIAA0319 like"                                                         
+#[116] "YEATS domain containing 2"                                             
+#[117] "long intergenic non-protein coding RNA 1697"                           
+#[118] "cell proliferation regulating inhibitor of protein phosphatase 2A"     
+#[119] "collagen type XXVII alpha 1 chain"                                     
+#[120] "zinc finger protein 177"                                               
+#[121] "zinc finger protein 407"                                               
+#[122] "FCH and double SH3 domains 2"                                          
+#[123] "stromal antigen 3"                                                     
+#[124] "sushi repeat containing protein X-linked 2"                            
+#[125] "nicotinamide phosphoribosyltransferase"                                
+#[126] "ribosomal protein S25"                                                 
+#[127] "lysophospholipase 1"                                                   
+#[128] "spondin 1"                                                             
+#[129] "OVCA2 serine hydrolase domain containing"                              
+#[130] "RNF103-CHMP3 readthrough"                                              
+#[131] "chromosome 2 open reading frame 49"                                    
+#[132] "LPS responsive beige-like anchor protein"                              
+#[133] "trinucleotide repeat containing adaptor 6A"                            
+#[134] "nucleobindin 1"                                                        
+#[135] "dynein axonemal heavy chain 7"                                         
+#[136] "progesterone receptor membrane component 2"                            
+#[137] "HLA complex group 17"                                                  
+#[138] "apoptosis antagonizing transcription factor" 
+
+```
+
+FGSEA analysis for results of differential expression and differential splicing analysis
+
+1.Install the required packages
+
+```r
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("fgsea")
+
+install.packages("tibble")
+install.packages("magrittr")
+install.packages("dplyr")
+library("dplyr")
+library("tibble")
+library("magrittr")
+library("fgsea")
+install.packages("gdata")
+library("gdata")
+install.packages("ggplot2")
+library("ggplot2")
+
+```
+2.Obtain the gene symbol names by splitting the rownames 
+into a datafrom and picking the symbol column
+
+```r
+
+res_stic_geneg <- do.call(rbind, strsplit(rownames(res_stic), '\\|'))
+res_plat_geneg <- do.call(rbind, strsplit(rownames(res_plat), '\\|'))
+stic_genes_full <- res_stic_geneg[,6]
+plat_genes_full <- res_plat_geneg[,6]
+
+```
+
+3.Extract the stat values from the DESeq2 results and combine 
+those into a data frame with the gene names then convert into a list
+
+```r 
+stat_stic <- res_stic$stat
+stat_plat <- res_plat$stat
+
+stic_values <- data.frame(stic_genes_full,stat_stic)
+plat_values <- data.frame(plat_genes_full,stat_plat)
+
+ranks_stic <- deframe(stic_values)
+ranks_plat <- deframe(plat_values)
+
+```
+
+4.Load the pathways data from the GSEA MSIG database and conduct GSEA
+
+```r
+pathways.hallmark <- gmtPathways("h.all.v7.0.symbols.gmt")
+
+fgseaRes_stic <- fgsea(pathways=pathways.hallmark, stats=ranks_stic, nperm=1000)
+fgseaRes_plat <- fgsea(pathways=pathways.hallmark, stats=ranks_plat, nperm=1000)
+
+```
+
+5.Use Tidyverse to tidy the results
+
+```r
+fgseaResTidy_stic <- fgseaRes_stic %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+  
+fgseaResTidy_stic %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+  
+fgseaResTidy_plat <- fgseaRes_plat %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+  
+fgseaResTidy_plat %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+```
+6. Plot the results
+
+```r
+
+ggplot(fgseaRes_stic, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA STIC") + 
+  theme_dark()
+
+ggplot(fgseaRes_plat, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+  title="Hallmark pathways NES from GSEA Platinum") + 
+  theme_dark()
+
+```
+7.Repeat for the DEXSEQ results 
+
+```r
+
+DEXSeq_stic_res <- DEXSeq_stic_res[1:200,]
+
+DEXSeq_plat_res <- DEXSeq_plat_res[1:200,]
+
+DEXSeq_stic_genes <- select(org.Hs.eg.db,stic_DEX_temp,
+                keytype = "ENSEMBL",columns="SYMBOL")
+
+DEXSeq_plat_genes <- select(org.Hs.eg.db,plat_DEX_temp ,
+                keytype = "ENSEMBL",columns="SYMBOL")
+                
+DEXSeq_stic_genes_unique <- unique(DEXSeq_stic_genes)
+DEXSeq_plat_genes_unique <- unique(DEXSeq_plat_genes)
+
+stat_stic_DEX <- as.numeric(DEXSeq_stic_res$stat)
+stat_plat_DEX <- as.numeric(DEXSeq_plat_res$stat)
+
+symbol_stic_DEX <- DEXSeq_stic_genes$SYMBOL
+symbol_plat_DEX <- DEXSeq_plat_genes$SYMBOL
+
+DEX_stats_stic <- data.frame(symbol_stic_DEX, stat_stic_DEX)
+DEX_stats_plat <- data.frame(symbol_plat_DEX, stat_plat_DEX)
+
+ranks_stic_DEX <- deframe(DEX_stats_stic)
+ranks_plat_DEX <- deframe(DEX_stats_plat)
+
+fgseaRes_stic_DEX <- fgsea(pathways=pathways.hallmark, stats=ranks_stic_DEX, nperm=1000)
+fgseaRes_plat_DEX <- fgsea(pathways=pathways.hallmark, stats=ranks_plat_DEX, nperm=1000)
+
+```
+8.Table of results
+
+```r
+fgseaResTidy_stic_DEX <- fgseaRes_stic_DEX %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+  
+fgseaResTidy_stic_DEX %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+  
+fgseaResTidy_plat_DEX <- fgseaRes_plat_DEX %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+  
+fgseaResTidy_plat_DEX %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+
+```
+
+9.Plots of results
+
+```r
+
+ggplot(fgseaRes_stic_DEX, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways from GSEA DEXSeq") + 
+  theme_dark()
+
+ggplot(fgseaRes_plat_DEX, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways from GSEA DEXSeq") + 
+  theme_dark()
+
+```
+10. Obtain gene names and GO terms from manually curated spreadsheet of selected genes
+
+```r
+
+
+
+DEXSeq_stic_short <- read.csv("DEXSEQ_stic_shortened.csv",header=TRUE)
+
+stic_DEX_temp_short <- gsub("\\..*","",DEXSeq_stic_short$ï..groupID)
+
+unique_res_s_short<- unique(stic_DEX_temp_short)
+
+DEXSeq_stic_go_short <- select(org.Hs.eg.db,unique_res_s_short ,
+                keytype = "ENSEMBL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+
+uniqueS <- unique(DEXSeq_stic_go_short[,5])
+
+uniqueS
+
+# [1] "actin gamma 1"                                         
+# [2] "eukaryotic translation elongation factor 1 alpha 1"    
+# [3] "prothymosin alpha"                                     
+# [4] "actin beta"                                            
+# [5] NA                                                      
+# [6] "amyloid beta precursor protein"                        
+# [7] "ribosomal protein S24"                                 
+# [8] "ribosomal protein L14"                                 
+# [9] "ribosomal protein S3"                                  
+#[10] "metastasis associated lung adenocarcinoma transcript 1"
+#[11] "ribosomal protein S17"                                 
+#[12] "heat shock protein 90 beta family member 1"            
+#[13] "calnexin"                                              
+#[14] "activated leukocyte cell adhesion molecule"            
+#[15] "tumor protein, translationally-controlled 1"           
+#[16] "SET nuclear proto-oncogene"                            
+#[17] "eukaryotic translation initiation factor 4 gamma 2"    
+#[18] "myotrophin"         
+
+DEXSeq_plat_short <- read.csv("DEXSEQ_Plat.csv",header=TRUE)
+
+plat_DEX_temp_short <- gsub("\\..*","",DEXSeq_plat_short$ï..groupID)
+
+unique_res_p_short<- unique(plat_DEX_temp_short)
+
+DEXSeq_plat_go_short <- select(org.Hs.eg.db,unique_res_p_short ,
+                keytype = "ENSEMBL",columns=c("GO","GENENAME","SYMBOL",
+                                            "ONTOLOGY"))
+
+uniqueP <- unique(DEXSeq_plat_go_short[,5])
+
+# [1] "fibronectin 1"                                      
+# [2] "complement C1s"                                     
+# [3] "doublecortin domain containing 2"                   
+# [4] "collectin subfamily member 12"                      
+# [5] "G1 to S phase transition 1"                         
+# [6] "ribosomal protein S6 kinase B1"                     
+# [7] "serine and arginine rich splicing factor 2"         
+# [8] "ribosomal protein S5"                               
+# [9] "caldesmon 1"                                        
+#[10] "RNA polymerase II subunit B"                        
+#[11] "myosin heavy chain 10"                              
+#[12] "LDL receptor related protein 1"                     
+#[13] "complement C1r subcomponent like"                   
+#[14] "NIMA related kinase 5"                              
+#[15] "RBM14-RBM4 readthrough"                             
+#[16] "coiled-coil domain containing 80"                   
+#[17] "sarcoglycan epsilon"                                
+#[18] "3-hydroxy-3-methylglutaryl-CoA reductase"           
+#[19] "ubiquitin specific peptidase 34"                    
+#[20] "glucose-6-phosphate isomerase"                      
+#[21] "thrombospondin 2"                                   
+#[22] "FAU ubiquitin like and ribosomal protein S30 fusion"
+#[23] "MDM2 proto-oncogene"                                
+#[24] "CEP295 N-terminal like"     
+
+```
+11. Repeat fgsea analysis to see if there are any signficant terms
+
+```r
+
+select <- AnnotationDbi::select
+
+DEXSeq_stic_genes_short <- select(org.Hs.eg.db,stic_DEX_temp_short,
+                keytype = "ENSEMBL",columns="SYMBOL")
+
+DEXSeq_plat_genes_short<- select(org.Hs.eg.db,plat_DEX_temp_short ,
+                keytype = "ENSEMBL",columns="SYMBOL")
+
+stat_stic_DEX <- as.numeric(DEXSeq_stic_short$stat)
+stat_plat_DEX <- as.numeric(DEXSeq_plat_short$stat)
+
+symbol_stic_DEX_short <- DEXSeq_stic_go_short$SYMBOL
+symbol_plat_DEX_short <- DEXSeq_plat_go_short$SYMBOL
+
+DEX_stats_stic_short <- data.frame(DEXSeq_stic_genes_short$SYMBOL , DEXSeq_stic_short$stat)
+DEX_stats_plat_short <- data.frame(DEXSeq_plat_genes_short$SYMBOL, DEXSeq_plat_short$stat)
+
+ranks_stic_DEX_short <- deframe(DEX_stats_stic_short)
+ranks_plat_DEX_short <- deframe(DEX_stats_plat_short)
+
+fgseaRes_stic_DEX_short <- fgsea(pathways=pathways.hallmark, stats=ranks_stic_DEX_short , nperm=1000)
+fgseaRes_plat_DEX_short <- fgsea(pathways=pathways.hallmark, stats=ranks_plat_DEX_short, nperm=1000)
+
+fgseaResTidy_stic_DEX_short <- fgseaRes_stic_DEX_short %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgseaResTidy_stic_DEX_short %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+fgseaResTidy_plat_DEX_short <- fgseaRes_plat_DEX_short %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgseaResTidy_plat_DEX_short %>%
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>%
+  arrange(padj) %>%
+  DT::datatable()
+
+ggplot(fgseaRes_stic_DEX_short, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways from GSEA DEXSeq") +
+  theme_dark()
+
+ggplot(fgseaRes_plat_DEX_short, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways from GSEA DEXSeq") +
+  theme_dark()
+
+```
+
+
+                                            

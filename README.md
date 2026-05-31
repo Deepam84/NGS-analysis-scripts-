@@ -8,9 +8,22 @@ salmon_download.sh - a bash script to download the paired fastq files of the raw
 
 salmon_quant.sh - a script to quantify transcript isoforms using the pseudoaligner Salmon against the indexed GENCODE Human transcriptome
 
-star_aligner.sh - a bash script to align reads to the current release of the GENCODE Human genome set using STAR
+star_aligner.sh - a bash script to align the paired fastq reads to GENCODE Human reference genome using STAR and outputs unsorted bam files
 
-dexseq_count.py - a Python script that carries out the DEXSEQ differential splicing 
+dexseq_count.py - a Python script that runs Samtools on the unsorted bam files and then quantifies them using HTSeq
 
-Ovarian_cancer_project.rmd - an R Markdown document that documents the importing of the transcriptome data into R to be used with DESeq2 for differential expression of transcripts, differential splicing to be analyzed with DEXSEQ plus isoform switching analysis with IsoformSwitchAnalyzeR, Gene Set Enrichment Analysis (GSEA), and WGCNA analysis to be later exported into Cytoscape.  
+Ovarian_cancer_project.rmd - an R Markdown document that documents the following: 
+
+The importing of the transcript isoform counts into R to be used with DESeq2 for analyzing differential expression of transcripts
+
+The DESeq2 analysis with Volcano plots and hierarchical clustering 
+
+The importing of the counted reads to be analyzed with DEXSEQ for analyzing differential splicing by testing for differential exon usage
+
+Isoform switching analysis with IsoformSwitchAnalyzeR using the Salmon transcript counts, DEXSEQ and DRIMSeq
+
+Gene Set Enrichment Analysis (GSEA), GO.db analysis and DAVID analysis 
+
+Whole Genome Network Correlation (WGCNA) generation of network data to be exported into
+
 

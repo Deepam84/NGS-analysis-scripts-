@@ -6,7 +6,7 @@ It contains the following:
 
 salmon_download.sh - a bash script to download the fastq files for this project from the Sequence Read Archive 
 
-salmon_quant.sh - a script to quantify the reads using the pseudoaligner Salmon against the indexed GENCODE Human transcriptome
+salmon_quant.sh - a script to transcript gene quantification using the pseudoaligner Salmon against the indexed GENCODE Human transcriptome
 
 star_aligner.sh - a bash script to align reads to the current release of the GENCODE Human genome set using STAR
 

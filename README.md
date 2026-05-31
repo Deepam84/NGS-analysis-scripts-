@@ -1,6 +1,6 @@
 # NGS-analysis-scripts-
-This repository contains the scripts for my Master's capstone project titled "Exploring alternative splicing isoforms in Ovarian Cancer" using the dataset GSE102073 taken from GEO and published as "Molecular analysis of high-grade serous ovarian carcinoma with and without associated serous tubal intra-epithelial carcinoma. Ducie J, Dao F, Considine M, Olvera N et al. Nat Commun 2017 Oct 17;8(1):990."
-This paper was selected on for the sequence data having a high read depth coverage of 40 million reads, necessary for an analysis for alternative splicing.
+This repository contains the scripts for my Master's capstone project titled "Exploring alternative splicing isoforms in Ovarian Cancer" using the dataset GSE102073 taken from GEO. The associated paper is titled "Molecular analysis of high-grade serous ovarian carcinoma with and without associated serous tubal intra-epithelial carcinoma. Ducie J, Dao F, Considine M, Olvera N et al. Nat Commun 2017 Oct 17;8(1):990."
+This paper was selected on for the sequence data having a high read depth coverage of 40 million reads, necessary for an analysis for alternative splicing differences in Platinum Sensitive and Resistant Ovarian Cancer and Ovarian Cancer with and without Serous Tubal Epithelial Carcinoma lesions (STICs).
 
 It contains the following:
 

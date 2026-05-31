@@ -10,7 +10,7 @@ salmon_quant.sh - a script to quantify transcript isoforms using the pseudoalign
 
 star_aligner.sh - a bash script to align reads to the current release of the GENCODE Human genome set using STAR
 
-dexseq_count.py - a bash script that carries out the DEXSEQ differential splicing 
+dexseq_count.py - a Python script that carries out the DEXSEQ differential splicing 
 
 Ovarian_cancer_project.rmd - an R Markdown document that documents the importing of the transcriptome data into R to be used with DESeq2 for differential expression of transcripts, differential splicing to be analyzed with DEXSEQ plus isoform switching analysis with IsoformSwitchAnalyzeR, Gene Set Enrichment Analysis (GSEA), and WGCNA analysis to be later exported into Cytoscape.  
 

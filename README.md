@@ -5,7 +5,12 @@ This paper was selected on for the sequence data having a high read depth covera
 It contains the following:
 
 salmon_download.sh - a bash script to download the fastq files for this project from the Sequence Read Archive 
-salmon_quant.sh - a script to quantify the reads using the pseudoaligner Salmon against the GENCODE Human transcriptome
+
+salmon_quant.sh - a script to quantify the reads using the pseudoaligner Salmon against the indexed GENCODE Human transcriptome
+
 star_aligner.sh - a bash script to align reads to the current release of the GENCODE Human genome set using STAR
+
 dexseq_count.py - a bash script that carries out the DEXSEQ differential splicing 
-Ovarian_cancer_project.rmd - an R Markdown document that documents the importing of the transcriptome data into R to be used with DeSeq2 and for to be analyzed with DEXSEQ plus isoform switching analysis with IsoformSwitchAnalyzeR Gene Set Enrichment Analysis (GSEA) and WGCNA analysis to be later imported into Cytoscape.  
+
+Ovarian_cancer_project.rmd - an R Markdown document that documents the importing of the transcriptome data into R to be used with DESeq2 for differential expression of transcripts, differential splicing to be analyzed with DEXSEQ plus isoform switching analysis with IsoformSwitchAnalyzeR, Gene Set Enrichment Analysis (GSEA), and WGCNA analysis to be later exported into Cytoscape.  
+
